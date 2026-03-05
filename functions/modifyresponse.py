@@ -9,10 +9,10 @@ logger = logging.getLogger(__name__)
 def _get_llm():
     """Get Azure OpenAI LLM instance"""
     return AzureChatOpenAI(
-        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_CHAT_ENDPOINT"),
+        api_key=os.getenv("AZURE_OPENAI_CHAT_API_KEY"),
         api_version="2024-02-15-preview",
-        deployment_name=os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4"),
+        deployment_name=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", "gpt-4o-mini"),
         temperature=0.0,
     )
 

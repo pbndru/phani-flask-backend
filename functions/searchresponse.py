@@ -34,10 +34,10 @@ def generate_response(
 
         # Initialize Azure OpenAI
         llm = AzureChatOpenAI(
-            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+            azure_endpoint=os.getenv("AZURE_OPENAI_CHAT_ENDPOINT"),
+            api_key=os.getenv("AZURE_OPENAI_CHAT_API_KEY"),
             api_version="2024-02-15-preview",
-            deployment_name=os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4"),
+            deployment_name=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", "gpt-4o-mini"),
             temperature=0.0,
         )
 
@@ -51,9 +51,9 @@ def generate_response(
 
         # Initialize Azure Search vector store
         vector_store = AzureSearch(
-            azure_search_endpoint=os.getenv("AZURE_SEARCH_ENDPOINT"),
-            azure_search_key=os.getenv("AZURE_SEARCH_KEY"),
-            index_name=os.getenv("AZURE_SEARCH_INDEX", "club-lloyds-index"),
+            azure_search_endpoint=os.getenv("AZURE_SEARCH_SERVICE_ENDPOINT"),
+            azure_search_key=os.getenv("AZURE_SEARCH_ADMIN_KEY"),
+            index_name=os.getenv("AZURE_SEARCH_INDEX_NAME", "rag-index"),
             embedding_function=embeddings.embed_query,
         )
 
