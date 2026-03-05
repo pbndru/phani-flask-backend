@@ -55,12 +55,15 @@ def generate_response(
             azure_search_key=os.getenv("AZURE_SEARCH_ADMIN_KEY"),
             index_name=os.getenv("AZURE_SEARCH_INDEX_NAME", "rag-index"),
             embedding_function=embeddings.embed_query,
+            content_key="content",   # Usually 'content'
+            vector_key="vector",     # <--- SET THIS TO 'vector'
+            metadata_key="metadata"  # Usually 'metadata'
         )
 
         # Create retriever
         retriever = vector_store.as_retriever(
             search_type="similarity",
-            search_kwargs={"k": config.top_k},
+            k=config.top_k, # Pass k directly here
         )
 
         # Get current date
@@ -107,9 +110,23 @@ def generate_response(
         return answer, citations, default_response
 
     except Exception as e:
-        logger.error(f"Error generating response: {e}")
+        # Import right at the top of the block
+        import traceback
+        
+        # Capture the full trace as a string
+        error_msg = str(e)
+        stack_trace = traceback.format_exc()
+        
+        # Log it to console just in case
+        print(f"CRITICAL ERROR: {error_msg}")
+        print(stack_trace)
+
+        # Force a return that definitely contains the error strings
         return (
-            "I apologize, but I encountered an error processing your question. Please try again.",
+            f"ERROR: {error_msg} | TRACE: {stack_trace}",
             [],
-            True,
+            True
         )
+
+
+        
