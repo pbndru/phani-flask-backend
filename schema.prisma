@@ -1,0 +1,139 @@
+// To create/edit a table, define/edit the model and run `prisma db push`
+// To update the Prisma client types with db changes, run `prisma generate`
+// To view the tables, run `prisma studio` or use pgAdmin
+
+datasource db {
+  url      = env("POSTGRES_CONN_STRING")
+  provider = "postgresql"
+}
+
+generator client {
+  provider             = "prisma-client-py"
+  binaryTargets        = ["native", "linux-musl"]
+  recursive_type_depth = -1
+}
+
+model Session {
+  id         String    @id
+  user_id    Int
+  created_at DateTime  @default(now())
+  user       Users     @relation(fields: [user_id], references: [id])
+  messages   Message[]
+}
+
+model Message {
+  id                    Int                 @id @default(autoincrement())
+  question              String
+  response              String
+  previous_chat_history Json                @default("{}")
+  created_at            DateTime            @default(now())
+  
+  // FKs
+  country_id            Int
+  request_type_id       Int
+  message_type_id       Int
+  data_source_id        Int
+  session_id            String
+  
+  // Relations
+  country               Country             @relation(fields: [country_id], references: [id])
+  requestType           RequestType         @relation(fields: [request_type_id], references: [id])
+  messageType           MessageType         @relation(fields: [message_type_id], references: [id])
+  dataSource            DataSource          @relation(fields: [data_source_id], references: [id])
+  session               Session             @relation(fields: [session_id], references: [id])
+  feedback              Feedback[]
+  messageCitations      MessageCitations[]
+}
+
+model SelectedFeedbackOptions {
+  feedback_id         Int
+  feedback_options_id Int
+  
+  // Relations
+  feedback            Feedback        @relation(fields: [feedback_id], references: [id])
+  feedbackOptions     FeedbackOptions @relation(fields: [feedback_options_id], references: [id])
+
+  // composite primary key
+  @@id([feedback_options_id, feedback_id])
+}
+
+model MessageCitations {
+  id              Int     @id @default(autoincrement())
+  message_id      Int
+  title           String
+  url             String
+  source_extracts String
+  
+  // Relations
+  message         Message @relation(fields: [message_id], references: [id])
+}
+
+model Feedback {
+  id                 Int                       @id @default(autoincrement())
+  feedback_free_text String
+  created_at         DateTime                  @default(now())
+  is_response_useful Boolean                   @default(false)
+  
+  // FKs
+  message_id         Int
+  
+  // Relations
+  message            Message                   @relation(fields: [message_id], references: [id])
+  messageFeedback    SelectedFeedbackOptions[]
+}
+
+model Users {
+  id                Int             @id @default(autoincrement())
+  job_centre        String?
+  email             String
+  unique_identifier String          @unique
+  created_at        DateTime        @default(now())
+  Session           Session[]
+  DownloadAudit     DownloadAudit[]
+}
+
+model DownloadAudit {
+  id                  Int      @id @default(autoincrement())
+  user_id             Int
+  filtered_start_date DateTime @default(now())
+  filtered_end_date   DateTime @default(now())
+  download_time       DateTime @default(now())
+  user                Users    @relation(fields: [user_id], references: [id])
+}
+
+model Country {
+  id        Int       @id @default(autoincrement())
+  name      String
+  is_active Boolean   @default(true)
+  messages  Message[]
+}
+
+model MessageType {
+  id        Int       @id @default(autoincrement())
+  name      String
+  is_active Boolean   @default(true)
+  messages  Message[]
+}
+
+model RequestType {
+  id        Int       @id @default(autoincrement())
+  name      String
+  is_active Boolean   @default(true)
+  messages  Message[]
+}
+
+model FeedbackOptions {
+  id              Int                       @id @default(autoincrement())
+  name            String
+  is_active       Boolean                   @default(true)
+  messageFeedback SelectedFeedbackOptions[]
+}
+
+model DataSource {
+  id         Int       @id @default(autoincrement())
+  name       String
+  is_active  Boolean   @default(true)
+  created_at DateTime  @default(now())
+  updated_at DateTime  @default(now())
+  messages   Message[]
+}

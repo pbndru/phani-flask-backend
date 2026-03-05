@@ -24,12 +24,16 @@ curl http://localhost:5001/liveness
 Expected: {"status": "alive"}
 
 4. Test Query endpoint
-curl -X POST http://localhost:5001/query \
-    -H "Content-Type: application/json" \
-    -d "{"query": "What benefits do I get with Club Lloyds?"}"
+curl -X POST http://localhost:5001/query -H "Content-Type: application/json" -d '{"query": "What benefits do I get with Club Lloyds?"}'
+
 Expected: 
 {
     "answer": "Echo: What benefits do I get with Club Lloyds?",
     "citations": [],
     "id":"test-123"
 }
+
+Next steps: Database setup
+winget install -e --id PostgreSQL.PostgreSQL.14
+net start postgresql-x64-14
+Open SQL Shell (psql) from Start Menu
