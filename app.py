@@ -1,90 +1,209 @@
-import os
+import logging
 import signal
 import time
-import logging
-from flask import Flask, request, jsonify, make_response
+import asyncio
+import os
+from prisma import Prisma
+from flask import Flask, request, make_response, jsonify
 from flask_cors import CORS
-from dotenv import load_dotenv
 from waitress import serve
 
-# Load environment variables
-load_dotenv()
+from functions.searchresponse import generate_response
+from functions.modifyresponse import (
+    summarise_response,
+    elaborate_response,
+    generate_follow_up_qs,
+)
+from modules.club_lloyds_config import ClubLloydsConfig
+from modules.error_handler import register_error_handlers
+from db.utils.posting_utils import handle_request
+from db.post_feedback import post_feedback
+from db.get_messages import get_messages, get_messages_with_feedback
+from db.utils.decode_token import decode_token
 
-# Configure logging
+# Logging Setup
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("azure").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-# Create Flask app
+# App Initialization
+is_ready = False
 app = Flask(__name__)
+logger.info("CLUB-LLOYDS-BE-APP-00")
+
+config = ClubLloydsConfig("config.yaml")
 cors = CORS()
 cors.init_app(app)
+db = Prisma()
+env = os.environ.get("ENVIRONMENT", "development")
+logger.info(f"ENVIRONMENT: {env}")
 
-# Environment
-env = os.environ.get("ENVIRONMENT", "LOCAL")
-logger.info(f"Environment: {env}")
-
-# Readiness flag
-is_ready = False
-
-# Graceful shutdown handler
-def handle_sigterm(signum, frame):
+# Signal Handling
+def handle_sigterm(signal, frame):
     global is_ready
-    logger.info("SIGTERM received, starting graceful shutdown...")
     is_ready = False
     time.sleep(5)
-    logger.info("Graceful shutdown complete")
+    print("Graceful shutdown complete")
     exit(0)
 
 signal.signal(signal.SIGTERM, handle_sigterm)
+register_error_handlers(app)
 
-# Health check endpoints
-@app.route("/health")
-def healthcheck():
-    logger.info("Health check")
-    response = make_response("healthy", 200)
-    response.mimetype = "text/plain"
-    return response
-
+# Health & Probe Endpoints
 @app.route("/readiness")
 def readiness_probe():
     if is_ready:
         return jsonify({"status": "ready"}), 200
     else:
+        logger.warning("CLUB-LLOYDS-BE-APP-11")
         return jsonify({"status": "not ready"}), 503
 
 @app.route("/liveness")
 def liveness_probe():
     return jsonify({"status": "alive"}), 200
 
-# Query endpoint
+@app.route("/health")
+def healthcheck():
+    logger.info("CLUB-LLOYDS-BE-APP-13")
+    response = make_response("healthcheck", 200)
+    response.mimetype = "text/plain"
+    return response
+
+@app.route("/health/db")
+def check_db_health():
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(connect_and_check())
+        if result:
+            return jsonify({"status": "success", "message": "Connected to Database"}), 200
+        else:
+            return jsonify({"status": "error", "message": "Could not connect"}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+async def connect_and_check():
+    try:
+        await db.connect()
+        await db.disconnect()
+        return True
+    except Exception:
+        return False
+
+# User Endpoints
+@app.route("/user-groups", methods=["POST"])
+async def get_user_group():
+    access_token = request.headers.get("x-access-token", None)
+    *_, is_admin = await decode_token(access_token)
+    return {"is_admin_user": is_admin}
+
+# Core Query Endpoints
 @app.route("/query", methods=["POST"])
 async def query():
-    logger.info("Query received")
-    if request.method == "POST":
-        data = request.get_json()
-        question = data.get("query", "")
-        
-        # TODO: Implement RAG pipeline for Club Lloyds docs
-        answer = f"Echo: {question}"
-        
-        return jsonify({
-            "answer": answer,
-            "citations": [],
-            "id": "test-123"
-        })
+    logger.info("CLUB-LLOYDS-BE-APP-02")
+    data = request.get_json()
+    question = data["query"]
+    chat_history = data.get("chat_history", [])
+    
+    answer, citations, default_response = generate_response(
+        question, chat_history, config, location=None
+    )
+    
+    logger.info("CLUB-LLOYDS-BE-APP-03")
+    message_id = await handle_request(
+        request, chat_history[-1] if chat_history else {}, question, answer, citations, "Query"
+    )
+    return {
+        "answer": answer,
+        "citations": citations,
+        "id": message_id,
+        "default_response": default_response,
+    }
+
+@app.route("/summarise", methods=["POST"])
+async def summarise():
+    logger.info("CLUB-LLOYDS-BE-APP-04")
+    prev_chat = request.get_json()["prev_chat"]
+    summarised_answer = summarise_response(prev_chat["question"], prev_chat["answer"], config)
+    
+    message_id = await handle_request(
+        request, prev_chat, "Summarise", summarised_answer, [], "Summarise"
+    )
+    return {
+        "summarised_answer": summarised_answer,
+        "id": message_id,
+        "citations": prev_chat["citations"],
+    }
+
+@app.route("/elaborate", methods=["POST"])
+async def elaborate():
+    logger.info("CLUB-LLOYDS-BE-APP-06")
+    prev_chat = request.get_json()["prev_chat"]
+    elaborated_answer = elaborate_response(
+        prev_chat["question"], prev_chat["answer"], prev_chat["citations"], config
+    )
+    
+    message_id = await handle_request(
+        request, prev_chat, "Elaborate", elaborated_answer, [], "Elaborate"
+    )
+    return {
+        "elaborated_answer": elaborated_answer,
+        "id": message_id,
+        "citations": prev_chat["citations"],
+    }
+
+@app.route("/followup", methods=["POST"])
+async def followup():
+    logger.info("CLUB-LLOYDS-BE-APP-08")
+    prev_chat = request.get_json()["prev_chat"]
+    follow_up_qs = generate_follow_up_qs(
+        prev_chat["question"], prev_chat["answer"], prev_chat["citations"], config
+    )
+    
+    message_id = await handle_request(
+        request, prev_chat, "Generate related follow-up questions", follow_up_qs, [], "Follow Up"
+    )
+    return {"follow_up_qs": follow_up_qs, "id": message_id}
+
+@app.route("/feedback", methods=["POST"])
+async def feedback():
+    logger.info("CLUB-LLOYDS-BE-APP-14")
+    access_token = request.headers.get("x-access-token", None)
+    hashed_email, *_ = await decode_token(access_token)
+    
+    data = request.get_json()
+    feedback_id = await post_feedback(
+        data["id"], data["message"], data["types"], data["is_response_useful"], hashed_email
+    )
+    return {"id": feedback_id}
+
+@app.route("/messages", methods=["POST"])
+async def messages():
+    logger.info("CLUB-LLOYDS-BE-APP-15")
+    access_token = request.headers.get("x-access-token", None)
+    hashed_email, *_ = await decode_token(access_token)
+    
+    data = request.get_json()
+    messages_list, total_pages = await get_messages(
+        hashed_email, data["start_date"], data["end_date"], data["page"]
+    )
+    return {"data": messages_list, "total_pages": total_pages}
+
+@app.route("/get-messages-feedback", methods=["POST"])
+async def messages_feedback():
+    logger.info("CLUB-LLOYDS-BE-APP-GMF")
+    access_token = request.headers.get("x-access-token", None)
+    *_, is_admin = await decode_token(access_token)
+    
+    if not is_admin:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    data = request.get_json()
+    messages_list, total_pages, total_count = await get_messages_with_feedback(
+        data["start_date"], data["end_date"], data["page"], data.get("feedback_types")
+    )
+    return {"data": messages_list, "total_pages": total_pages, "total_count": total_count}
 
 if __name__ == "__main__":
-    HOST_IP = "0.0.0.0"
-    PORT = 5001
-    THREADS = int(os.environ.get("THREADS", 100))
     is_ready = True
-    
-    logger.info("Mini-Backend starting...")
-    
-    if env == "LOCAL":
-        # Development mode using Flask's built-in server
-        app.run(host=HOST_IP, port=PORT, debug=True)
-    else:
-        # Production mode using the Waitress WSGI server
-        # Learn more at the [Waitress Documentation](https://docs.pylonsproject.org)
-        serve(app, host=HOST_IP, port=PORT, threads=THREADS)
+    serve(app, host="0.0.0.0", port=5002)
